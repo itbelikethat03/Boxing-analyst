@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "boxing-ai"
+version = "0.1.0"
+description = "Boxing event analytics: structured action events, sequence analysis, and (later) CV-based event extraction."
+readme = "README.md"
+requires-python = ">=3.11"
+# Core stays deliberately tiny: pure-Python domain + analytics.
+dependencies = [
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+db = ["psycopg[binary]>=3.1"]
+dashboard = ["streamlit>=1.35"]
+# cv = [...]  # added in Phase 3 (torch, ultralytics, opencv); intentionally absent from the MVP.
+dev = [
+    "pytest>=8",
+    "ruff>=0.5",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+markers = [
+    "integration: needs a running PostgreSQL (configured via BOXING_AI_TEST_DSN); skipped otherwise",
+]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+# `ruff format` wraps code at line-length; long docstring/comment prose lines are allowed.
+ignore = ["E501"]

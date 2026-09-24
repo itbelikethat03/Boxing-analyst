@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Secrets / local config
+.env
+
+# Raw video and derived bulk signals are never versioned (identity = sha256 in the `videos` table).
+# Annotation files under data/annotations/ ARE the ground-truth dataset and ARE versioned.
+data/raw/*
+!data/raw/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# Media that might land elsewhere by accident
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.webm
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
