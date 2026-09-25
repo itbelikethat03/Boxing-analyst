@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from boxing_ai.events import Event
+from boxing_ai.ontology import Commitment
 
 Tokenizer = Callable[[Event], str]
 
@@ -32,6 +33,15 @@ def by_action_target(event: Event) -> str:
     return f"{event.action_type}_{event.target}" if event.target else event.action_type
 
 
+def by_action_commitment(event: Event) -> str:
+    """``JAB_PROBE`` for probing punches; everything else keeps its plain code (``JAB``, ``FEINT``)."""
+    return (
+        f"{event.action_type}_{event.commitment}"
+        if event.commitment is Commitment.PROBE
+        else event.action_type
+    )
+
+
 def actor_tagged(tokenizer: Tokenizer, *, self_fighter: str) -> Tokenizer:
     """Prefix tokens with who acted, for two-fighter streams: ``SELF:JAB``, ``OPP:SLIP_LEFT``.
 
@@ -44,3 +54,12 @@ def actor_tagged(tokenizer: Tokenizer, *, self_fighter: str) -> Tokenizer:
         return f"{actor}:{tokenizer(event)}"
 
     return tokenize
+
+
+# Named tokenizers for user interfaces (CLI flags, API parameters).
+TOKENIZERS: dict[str, Tokenizer] = {
+    "action": by_action,
+    "direction": by_action_direction,
+    "target": by_action_target,
+    "commitment": by_action_commitment,
+}

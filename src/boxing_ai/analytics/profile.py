@@ -11,7 +11,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from boxing_ai.events import Event, Round, UnobservedInterval, observed_ms
-from boxing_ai.ontology import Category
+from boxing_ai.ontology import Category, Outcome
 
 MS_PER_MINUTE = 60_000
 
@@ -75,3 +75,43 @@ def round_stats(
             )
         )
     return stats
+
+
+@dataclass(frozen=True)
+class OutcomeStat:
+    """What happened to one action's attempts. ``unknown`` = outcome not recorded / not visible."""
+
+    action_type: str
+    thrown: int
+    landed: int
+    blocked: int
+    missed: int
+
+    @property
+    def unknown(self) -> int:
+        return self.thrown - self.landed - self.blocked - self.missed
+
+    @property
+    def landed_rate(self) -> float | None:
+        """Landed / attempts with a *known* outcome; ``None`` when no outcome is known."""
+        known = self.landed + self.blocked + self.missed
+        return None if known == 0 else self.landed / known
+
+
+def outcome_breakdown(events: Iterable[Event]) -> list[OutcomeStat]:
+    """Landed/blocked/missed per punch type, most thrown first (ties by action code)."""
+    tally: dict[str, Counter[Outcome | None]] = {}
+    for e in events:
+        if e.category is Category.PUNCH:
+            tally.setdefault(e.action_type, Counter())[e.outcome] += 1
+    stats = [
+        OutcomeStat(
+            action,
+            thrown=sum(c.values()),
+            landed=c[Outcome.LANDED],
+            blocked=c[Outcome.BLOCKED],
+            missed=c[Outcome.MISSED],
+        )
+        for action, c in tally.items()
+    ]
+    return sorted(stats, key=lambda s: (-s.thrown, s.action_type))

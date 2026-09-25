@@ -17,11 +17,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
 
-ONTOLOGY_VERSION = "0.1"
+ONTOLOGY_VERSION = "0.2"  # 0.2: FEINT category/action, punch `commitment`
 
 
 class Category(StrEnum):
     PUNCH = "PUNCH"
+    FEINT = "FEINT"  # a faked attack: no strike is thrown, but it belongs in sequences
     DEFENSE = "DEFENSE"
     MOVEMENT = "MOVEMENT"
 
@@ -53,6 +54,46 @@ class Outcome(StrEnum):
     MISSED = "MISSED"
 
 
+class Commitment(StrEnum):
+    """How committed a punch is. ``PROBE`` = pawing/range-finding/measuring; ``FULL`` = a committed shot.
+
+    A probe is still a thrown punch (it counts as one); a *feint* throws nothing and is the ``FEINT`` action.
+    """
+
+    PROBE = "PROBE"
+    FULL = "FULL"
+
+
+class Corner(StrEnum):
+    """How annotators identify a fighter within a fight."""
+
+    RED = "RED"
+    BLUE = "BLUE"
+
+
+class Stance(StrEnum):
+    """Which hand is LEAD: orthodox = left, southpaw = right."""
+
+    ORTHODOX = "ORTHODOX"
+    SOUTHPAW = "SOUTHPAW"
+    SWITCH = "SWITCH"
+
+
+class SessionKind(StrEnum):
+    """What kind of footage: a real bout, or training used for comparison."""
+
+    FIGHT = "FIGHT"
+    SPARRING = "SPARRING"
+    PADS = "PADS"
+    BAG = "BAG"
+    SHADOW = "SHADOW"
+
+    @property
+    def participants(self) -> int:
+        """Annotated people: two boxers, or one (pad holders, bags and mirrors are not annotated)."""
+        return 2 if self in (SessionKind.FIGHT, SessionKind.SPARRING) else 1
+
+
 class UnobservedKind(StrEnum):
     """Why a stretch of video is not (exhaustively) annotated. Events may not fall inside these."""
 
@@ -67,8 +108,10 @@ class ActionSpec:
     """Rules for one action code.
 
     ``implied_side``: side that is true *by definition* (jab = lead hand, cross = rear hand).
-    ``directions``: allowed directions for non-punch actions (empty = the action takes no direction).
+    ``directions``: allowed directions (empty = the action takes no direction).
     ``direction_required``: whether a direction must be supplied.
+    The ``takes_*`` flags say which optional attributes the action accepts; ``side_required`` whether the side
+    must be known. Defaults are those of a defensive/movement action (no side/target/outcome/commitment).
     """
 
     code: str
@@ -77,6 +120,25 @@ class ActionSpec:
     implied_side: Side | None = None
     directions: frozenset[Direction] = frozenset()
     direction_required: bool = False
+    takes_side: bool = False
+    side_required: bool = False
+    takes_target: bool = False
+    takes_outcome: bool = False
+    takes_commitment: bool = False
+
+
+def _punch(code: str, description: str, implied_side: Side | None = None) -> ActionSpec:
+    return ActionSpec(
+        code,
+        Category.PUNCH,
+        description,
+        implied_side=implied_side,
+        takes_side=True,
+        side_required=True,
+        takes_target=True,
+        takes_outcome=True,
+        takes_commitment=True,
+    )
 
 
 _LR = frozenset({Direction.LEFT, Direction.RIGHT})
@@ -84,12 +146,18 @@ _ALL_DIRECTIONS = frozenset(Direction)
 
 _SPECS: tuple[ActionSpec, ...] = (
     # --- Punches -------------------------------------------------------------------------------
-    ActionSpec("JAB", Category.PUNCH, "Straight punch with the lead hand", implied_side=Side.LEAD),
+    _punch("JAB", "Straight punch with the lead hand", implied_side=Side.LEAD),
+    _punch("CROSS", "Straight punch with the rear hand", implied_side=Side.REAR),
+    _punch("HOOK", "Circular punch; either hand"),
+    _punch("UPPERCUT", "Rising punch; either hand"),
+    # --- Feints: side = the hand that faked (blank for shoulder/head/foot feints), target = what it threatened
     ActionSpec(
-        "CROSS", Category.PUNCH, "Straight punch with the rear hand", implied_side=Side.REAR
+        "FEINT",
+        Category.FEINT,
+        "Faked attack meant to draw a reaction; nothing is thrown",
+        takes_side=True,
+        takes_target=True,
     ),
-    ActionSpec("HOOK", Category.PUNCH, "Circular punch; either hand"),
-    ActionSpec("UPPERCUT", Category.PUNCH, "Rising punch; either hand"),
     # --- Defensive actions (registered now so the model is proven generic; annotating them is optional)
     ActionSpec(
         "SLIP",

@@ -1,6 +1,7 @@
 from boxing_ai.sequences import (
     actor_tagged,
     by_action,
+    by_action_commitment,
     by_action_direction,
     by_action_target,
 )
@@ -30,3 +31,10 @@ def test_actor_tagged_marks_self_and_opponent():
     tokenize = actor_tagged(by_action_direction, self_fighter="fighter-a")
     assert tokenize(ev("JAB", fighter="fighter-a")) == "SELF:JAB"
     assert tokenize(ev("SLIP", fighter="fighter-b", direction="RIGHT")) == "OPP:SLIP_RIGHT"
+
+
+def test_by_action_commitment_marks_only_probes():
+    assert by_action_commitment(ev("JAB", commitment="PROBE")) == "JAB_PROBE"
+    assert by_action_commitment(ev("JAB", commitment="FULL")) == "JAB"
+    assert by_action_commitment(ev("JAB")) == "JAB"
+    assert by_action_commitment(ev("FEINT")) == "FEINT"

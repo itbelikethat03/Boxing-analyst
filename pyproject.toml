@@ -13,17 +13,24 @@ dependencies = [
     "pydantic>=2.6",
 ]
 
+[project.scripts]
+boxing-ai = "boxing_ai.cli:main"
+
 [project.optional-dependencies]
 db = ["psycopg[binary]>=3.1"]
-dashboard = ["streamlit>=1.35"]
+api = ["fastapi>=0.115", "uvicorn>=0.30"]
 # cv = [...]  # added in Phase 3 (torch, ultralytics, opencv); intentionally absent from the MVP.
 dev = [
     "pytest>=8",
+    "httpx2>=2.13",  # FastAPI/Starlette TestClient
     "ruff>=0.5",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"boxing_ai.database" = ["migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

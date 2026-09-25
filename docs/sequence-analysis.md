@@ -9,7 +9,7 @@ function of a list of `Event`s — no database, no UI — and fully deterministi
 events ─ filter categories ─ order ─ segment into bursts ─ tokenize ─ n-grams / transition tables
 ```
 
-- **Categories** are filtered *first* (default: PUNCH + DEFENSE; footwork excluded), so gaps are measured between
+- **Categories** are filtered *first* (default: PUNCH + FEINT + DEFENSE; footwork excluded), so gaps are measured between
   the events that remain.
 - **Tokenizer** = projection `Event -> str`: `by_action` (`SLIP`), `by_action_direction` (`SLIP_LEFT`),
   `by_action_target` (`HOOK_BODY`), or `actor_tagged(...)` for two-fighter streams (`SELF:JAB`, `OPP:SLIP`).
@@ -31,6 +31,8 @@ events ─ filter categories ─ order ─ segment into bursts ─ tokenize ─ 
 | P(next \| previous) / what follows X? | `transition_probabilities`, `next_after` |
 | How do bursts start / end? | `entry_patterns`, `exit_patterns` |
 | What does he throw, and how much per round (per *observed* minute)? | `action_distribution`, `round_stats` |
+| How often does each punch land / get blocked / miss? | `outcome_breakdown` (landed% over *known* outcomes) |
+| Which sequences pay off? | `pattern_outcomes(events, n)` — `top_ngrams` plus how often the sequence's **final** punch landed |
 | How does he react to the opponent's jab? | `next_after(both fighters' events, "OPP:JAB", spec_with_actor_tagged_tokenizer)` |
 | Slice by fighter/fight/video/round/time | `select_events` (SQL does this for real data from M4) |
 

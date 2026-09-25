@@ -8,7 +8,17 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[2] / "src" / "boxing_ai"
 
 # Third-party modules that pure-core packages must never import.
-HEAVY_OR_IO = {"psycopg", "psycopg_pool", "streamlit", "cv2", "torch", "ultralytics", "sqlalchemy"}
+HEAVY_OR_IO = {
+    "psycopg",
+    "psycopg_pool",
+    "fastapi",
+    "uvicorn",
+    "streamlit",
+    "cv2",
+    "torch",
+    "ultralytics",
+    "sqlalchemy",
+}
 
 # Layer -> other boxing_ai packages it must NOT import.
 # (ontology is a leaf; events sits on it; sequences on events; analytics on sequences.)

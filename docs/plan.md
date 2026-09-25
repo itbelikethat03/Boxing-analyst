@@ -15,7 +15,7 @@
 | `ffmpeg` absent | Not needed for MVP. Required at Phase 3 start (CFR normalisation, frame extraction) |
 | **GTX 970, 4 GB (Maxwell, sm_52)** | Fine for pose inference + small temporal models. Not for fine-tuning video transformers. Recent PyTorch wheels are progressively dropping old GPU architectures → **verify `torch.cuda.get_arch_list()` before committing to a Phase-3 stack**; CPU fallback / occasional rented GPU are contingency |
 
-**Your answers.** Footage = **broadcast pro fights** (hardest CV case). Postgres = **Docker Desktop + compose**. Annotation = **CSV first, hotkey tool later**.
+**Your answers.** Footage = **broadcast pro fights** (hardest CV case). Postgres = **Docker Desktop + compose** (later: portable PostgreSQL, no Docker on this PC — `docs/database.md`). Annotation = **CSV first, web annotator later**.
 
 **What broadcast footage adds that your spec doesn't cover.** Broadcast video has camera cuts, replays/slow-mo (which would *double-count* punches), cutaways, tight shots that hide the opponent, and many viewpoints. So the annotation format and schema must express **"which parts of the video were observed and exhaustively annotated"** (`unobserved_intervals`, §3/§5). Without it: replays inflate counts, punches across a camera cut become fake adjacent pairs, punches/min is wrong, and unannotated real punches poison future ML training as false "negatives". This is the largest addition to your proposal and it's much cheaper to build in now than to retrofit into annotations.
 
@@ -37,8 +37,8 @@
 | **Missing: what counts as a "combination"/"exchange"** | ➕ Define | Naïve n-grams across a 30 s pause invent `JAB→CROSS`. Sequences are computed within **bursts** split by a gap threshold and by hard breaks (unobserved intervals, round boundaries). Derived, never stored. |
 | **Pose estimation** | ✅ Baseline, not gospel | Compact, data-efficient, small temporal model fits a 4 GB GPU. Risks: wrists blurred/occluded by gloves & opponent, boxers only ~150–300 px tall in wide shots, no glove/impact cues, 3–6 frames per punch at 25–30 fps. Decide by *measured* ablation; keep the classifier interface swappable. |
 | **YOLO** | ✅ but as **YOLO-pose + tracker**, not a separate detector | A separate person-detector adds little (two boxers + referee is easy); the hard parts are tracking, identity, clinches. Note Ultralytics is **AGPL-3.0** (fine privately; matters if you distribute). Alternatives if wrists are bad: RTMPose/ViTPose. |
-| **Streamlit** | ✅ MVP read-only dashboard; ❌ for annotation | `st.video(start_time=…)` gives click-to-jump. Poor fit for frame-accurate hotkey annotation → separate tool later. |
-| **FastAPI** | ❌ Defer | Streamlit/CLI call the service layer in-process. Add only when a second client (web front-end, remote ML worker) appears; service functions return plain dataclasses so the wrapper is thin. |
+| **Streamlit** | ❌ Dropped (2026-09-25) | Rerun-the-script model can't keep a video player in sync with an event timeline, no frame stepping or hotkeys; custom JS components would be needed anyway. See **Decision: web stack** below. |
+| **FastAPI** | ✅ From M6 | Thin HTTP layer over `reporting`/`database` (like `cli.py`) serving the React front-end; pydantic models already exist. |
 | **Proposed repo tree** | ⚠️ Trim | No empty `detection/ tracking/ classification/` packages until Phase 3. Add `annotations/`, `evaluation/`, `ontology`. |
 
 ---
@@ -61,22 +61,22 @@
                                           │
                      reporting (thin composition: repo → analytics → Report dataclass)
                           ┌───────────────┴──────────────┐
-                    cli (argparse)                 dashboard/ (Streamlit)
-                                                   (renders only; no logic)
+                    cli (argparse)                 api (FastAPI) ──► web/ (React + TypeScript)
+                                                   (serialise/render only; no logic)
 
  Phase 3 (separate optional extra, created later):  vision/  ──produces──► list[Event]
    ffmpeg/shots ► pose+track (YOLO-pose+ByteTrack) ► identity ► temporal model ► post-process ► Events
    (imports core.events; core NEVER imports vision)
 ```
 
-**Dependency rules (enforced by an AST-based test, no extra dependency):** `events`, `sequences`, `analytics`, `evaluation` may not import `psycopg`, `streamlit`, `cv2`, `torch`, or `database`. `database` may not import `analytics`. UI may not import `psycopg`.
+**Dependency rules (enforced by an AST-based test, no extra dependency):** `events`, `sequences`, `analytics`, `evaluation` may not import `psycopg`, `fastapi`, `cv2`, `torch`, or `database`. `database` may not import `analytics`. UI may not import `psycopg`.
 
 **Key architectural decisions**
 1. **Events are immutable facts scoped to a *source run*.** Corrections = re-import the whole source in one transaction (`ON DELETE CASCADE`). No in-place row editing in MVP.
 2. **Analytics take `Sequence[Event]`, not a DB handle.** Deterministic, unit-testable with plain lists. The repository fetches ordered streams; n-gram logic stays in Python (tokenizers + gap segmentation don't map cleanly to SQL). SQL window functions (`LEAD`) are used only as an *independent cross-check* in tests.
 3. **Ontology is defined once in code** (`ontology.py`: action → category, required/allowed attributes, allowed directions) and synced into `action_types` by the migration runner. A test asserts DB rows == code. Adding SLIP/STEP later = data, not DDL.
 4. **Tokenization is a projection** (`Event → str`), chosen per query.
-5. **Optional dependency extras:** core = `pydantic`; `[db]` = `psycopg[binary]`; `[dashboard]` = `streamlit`; `[cv]` = torch/ultralytics/opencv (later); `[dev]` = pytest, ruff.
+5. **Optional dependency extras:** core = `pydantic`; `[db]` = `psycopg[binary]`; `[api]` = `fastapi` + `uvicorn`; `[cv]` = torch/ultralytics/opencv (later); `[dev]` = pytest, ruff.
 6. **Determinism:** integer times, total ordering `(start_ms, end_ms, id)`, stable sorts with explicit tie-breaks, no unseeded randomness.
 
 ---
@@ -222,7 +222,8 @@ src/boxing_ai/
   reporting.py                # thin: repository → analytics → Report dataclass
   cli.py                      # argparse: init-db | import | report | db-check
   # vision/ (detection, tracking, pose, classification) is created in Phase 3, not before
-dashboard/app.py             # Streamlit; renders Report objects only
+src/boxing_ai/api.py         # FastAPI; serialises Report/Event objects only
+web/                         # React + TypeScript (Vite): viewer + annotator; talks to the API only
 tests/  unit/  integration/(db)  fixtures/(hand-calculated golden data)
 scripts/  data/{raw(gitignored), annotations(tracked), processed(gitignored)}
 ```
@@ -328,8 +329,8 @@ These fixtures live in `tests/fixtures/` and in `docs/`, and are additionally cr
 | Annotation I/O | valid folder loads; every invalid class yields file+line message; CSV→Event→CSV round trip; time-format parsing |
 | Database (real Postgres, `integration` marker) | round-trip equality; **each CHECK/FK rejects bad raw SQL** (e.g. JAB+REAR, non-participant fighter, unknown round); idempotent re-import (hash); source replace is atomic; cascade; ontology-in-code == `action_types`; SQL `LEAD()` bigram counts == Python counts; HUMAN vs MODEL source → identical analytics |
 | Performance | synthetic 2M-row dataset + `EXPLAIN` on the primary queries (M4) |
-| Architecture | AST import-boundary test (core never imports psycopg/streamlit/cv2/torch) |
-| CLI/UI | end-to-end import→report equals hand-calculated numbers; Streamlit `AppTest` smoke |
+| Architecture | AST import-boundary test (core never imports psycopg/fastapi/cv2/torch) |
+| CLI/API/UI | end-to-end import→report equals hand-calculated numbers (CLI and API `TestClient`); front-end component tests + a manual browser pass |
 | Evaluation harness (M8) | synthetic predictions: jitter times → timing metrics; drop events → recall; inject events → FP/min; flip classes → confusion matrix; wrong fighter → attribution — metrics match hand math |
 | ML (Phase 3) | §7 metrics on grouped-CV; FP/min; downstream fidelity |
 
@@ -341,7 +342,7 @@ Tooling: `pytest` (`-m "not integration"` fast loop; integration runs when a tes
 
 > Given manually annotated broadcast footage (CSV+TOML), import individual actions into PostgreSQL and generate deterministic statistical analyses of boxing sequences, viewable in a basic interface.
 
-Proves your 7 criteria: event model works (M1) · DB works (M4) · efficient queries (M4 EXPLAIN) · chronological sequences (M2) · n-grams (M2) · fighter stats (M2/M5) · basic interface (M5 CLI, M6 Streamlit). **Out of scope:** any CV/ML, FastAPI, video annotation UI, multi-user auth, sophisticated sequence mining. Defensive actions are **in the ontology and test fixtures** (to prove extensibility; punch-only assumptions would otherwise leak into the schema) but annotating them is optional/low-priority.
+Proves your 7 criteria: event model works (M1) · DB works (M4) · efficient queries (M4 EXPLAIN) · chronological sequences (M2) · n-grams (M2) · fighter stats (M2/M5) · basic interface (M5 CLI, M6 API + web viewer). **Out of scope:** any CV/ML, multi-user auth, sophisticated sequence mining. Defensive actions are **in the ontology and test fixtures** (to prove extensibility; punch-only assumptions would otherwise leak into the schema) but annotating them is optional/low-priority.
 
 ---
 
@@ -355,8 +356,8 @@ Proves your 7 criteria: event model works (M1) · DB works (M4) · efficient que
 | **M3** | Annotation format + loader/writer + `docs/annotation.md` + synthetic sample folder | Valid loads; invalid → precise errors; round-trip | M |
 | **M4** | Postgres: compose, migrations, schema, repository, import, queries | Integration suite green on real DB incl. constraint rejection, LEAD() cross-check, EXPLAIN on 2M rows | L |
 | **M5** | `reporting` + CLI (`init-db/import/report/db-check`) — **first usable MVP**: you annotate a real clip and run it | E2E test matches hand-calculated report; you try it on a real fight round | M |
-| **M6** | Streamlit dashboard (thin): filters, totals, distribution, top n-grams, "after X", click-to-seek via `st.video(start_time)` | `AppTest` smoke; no logic in UI. **MVP complete.** (Use the `dataviz` skill for charts.) | M |
-| **M7** | Decision point: hotkey annotator (OpenCV, frame-step, tap-a-key) based on annotation pain | Build only if annotation throughput is the bottleneck | M |
+| **M6** | FastAPI layer (sources, fighter report, events per video, video streaming with seek) + React/TypeScript viewer: filters, totals, outcome table, top sequences with landed %, "after X", video player synced to an event timeline, click-a-pattern → jump to each occurrence | API `TestClient` suite; no logic in API/UI. **MVP complete.** (Use the `dataviz` skill for charts.) | L |
+| **M7** | Web annotator in the same app: frame stepping, hotkeys per action/outcome, events drawn on the timeline, writes the same `events.csv`/import path | Replaces the OpenCV tool idea; build once real annotation shows where the time goes | M |
 | **M8** | Evaluation harness (§7) on synthetic predictions + inter-annotator agreement tool | Metric self-tests match hand math | M |
 | **M9** | Distinctive-sequence analysis (lift), between-round/fight change, gap-threshold sensitivity report | Needs ≥ several fights of annotations | M |
 | **V0–V5** | Phase 3: feasibility spike → ingest/shots/replays → pose+track → heuristic baseline → temporal model → MODEL-source integration | Gated by M8 metrics; V0 go/no-go decision | XL |
@@ -365,9 +366,22 @@ Proves your 7 criteria: event model works (M1) · DB works (M4) · efficient que
 
 ---
 
+### Decision: web stack (2026-09-25, replaces Streamlit)
+
+The interface has two hard requirements Streamlit cannot meet: statistics linked to footage (click a pattern → jump to
+every occurrence, event timeline synced with playback) and, later, a frame-accurate annotation tool — annotation
+throughput is the project's real bottleneck. Chosen: **FastAPI** (thin, reuses the pydantic models; Python stays
+server-side for analytics and CV) + **React + TypeScript (Vite)** (native `<video>` with precise seeking and
+`requestVideoFrameCallback`; largest charting/table/video ecosystem). Considered: Dash/NiceGUI/Reflex (video
+interaction still needs custom JS, smaller ecosystems), Django (ORM would compete with the hand-written schema),
+SvelteKit (valid, leaner; React chosen for ecosystem). Cost: a second language and a JS build step. Hosting broadcast
+footage publicly raises rights questions (risk 11); annotations are shareable.
+
+---
+
 ## 11. Major technical risks
 
-1. **Annotation cost/quality is the true bottleneck** (0.1–0.3 s events, flurries, fuzzy boundaries). Mitigate: exhaustive-or-`UNCERTAIN` rule, written protocol, double-annotation, hotkey tool (M7), later model pre-annotation.
+1. **Annotation cost/quality is the true bottleneck** (0.1–0.3 s events, flurries, fuzzy boundaries). Mitigate: exhaustive-or-`UNCERTAIN` rule, written protocol, double-annotation, web annotator with hotkeys (M7), later model pre-annotation.
 2. **Broadcast domain difficulty:** cuts, replays (double counting), many angles, referee, overlays, fighters small in wide shots (~150–300 px), motion blur, 25–30 fps ⇒ 3–6 frames/punch. Mitigate: `unobserved_intervals`, main-wide-camera-only v1, V0 feasibility spike before any big investment, possible crop-and-upscale second pass.
 3. **Pose failure modes:** wrists occluded by gloves/opponent, overlapping bodies, no glove/impact cues. Mitigate: measure keypoint quality first; alternatives RTMPose/ViTPose; add appearance features only if ablations justify.
 4. **Fighter attribution/identity** in clinches, ID swaps, camera cuts. Human-seeded anchors + corrections; measured separately.
@@ -396,9 +410,9 @@ Proves your 7 criteria: event model works (M1) · DB works (M4) · efficient que
 
 **Still open (don't block M0–M2; need answers by the noted milestone):**
 1. *(M3)* Exact time convention for `start_ms/end_ms` (start of motion vs impact) — I proposed one; confirm after annotating a real 30-second clip.
-2. *(M3)* Do you want `outcome` (landed/missed) annotated from day one, or ignored initially?
-3. *(M3)* Is single-fighter footage (shadow-boxing/bag/pads) ever in scope? (Schema allows 1 participant; ring-fight assumptions don't.)
-4. *(M4/M5)* Default source rule when a video has several sources (e.g. "prefer HUMAN named `gold`"); required for dashboards.
+2. ~~*(M3)* Annotate `outcome` from day one?~~ **Resolved: yes** — required for punches in fights/sparring (`UNKNOWN` allowed when hidden).
+3. ~~*(M3)* Single-fighter footage in scope?~~ **Resolved: yes**, for comparison — `fight.kind` = FIGHT/SPARRING/PADS/BAG/SHADOW. Long-term goal: find the most *successful* patterns of elite fighters (Inoue, Durán, …), which is why outcome is mandatory. Also added (ontology 0.2): `FEINT` action and punch `commitment` (PROBE/FULL). **M4 schema must follow:** category CHECK gains `'FEINT'`, events gain `commitment`, fights gain `kind`, and the side/target CHECKs become per-category (feints take optional side/target).
+4. ~~*(M4/M5)* Default source rule~~ **Resolved (M5):** per video the single HUMAN source, else the single MODEL source; otherwise the report refuses and lists candidates (`--source name[@version]`). See `src/boxing_ai/reporting.py`.
 5. *(M2/M9)* Gap-threshold defaults — will be tuned from your real data.
 6. *(V0)* GPU stack viability on GTX 970; willingness to use occasional cloud GPU/Colab (data-rights aware).
 7. *(Later)* Personal use only, or eventually distributed? (AGPL/footage rights.)
@@ -411,5 +425,5 @@ Proves your 7 criteria: event model works (M1) · DB works (M4) · efficient que
 - **Sequence analytics (M2):** compare against the hand-computed tables in §6 stored as fixtures, plus the independent SQL `LEAD()` cross-check in M4.
 - **DB design (M4):** run constraint-rejection tests via raw SQL, inspect the schema with `\d+`, run `EXPLAIN (ANALYZE)` on the synthetic 2M-row dataset.
 - **End to end (M5):** import the synthetic sample folder, run `boxing-ai report`, assert output equals hand-calculated numbers; then run it on one real annotated round of your footage.
-- **Dashboard (M6):** Streamlit `AppTest` + a manual pass in the browser (click-to-seek).
+- **API + web viewer (M6):** API tests against the real DB via `TestClient`; front-end tests; a manual browser pass (click-to-seek, timeline sync).
 - **Evaluation harness (M8):** perturb gold events synthetically and confirm each metric moves exactly as expected.

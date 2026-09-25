@@ -17,6 +17,8 @@ dist/
 data/raw/*
 !data/raw/.gitkeep
 data/processed/*
+# Local PostgreSQL cluster (scripts/pg.ps1)
+data/pg/
 !data/processed/.gitkeep
 
 # Media that might land elsewhere by accident

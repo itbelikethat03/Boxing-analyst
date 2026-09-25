@@ -24,7 +24,8 @@ from boxing_ai.sequences.tokens import Tokenizer, by_action
 
 DEFAULT_COMBO_GAP_MS = 1000  # one fighter's combination
 DEFAULT_EXCHANGE_GAP_MS = 2500  # an exchange between both fighters
-DEFAULT_CATEGORIES = frozenset({Category.PUNCH, Category.DEFENSE})  # footwork excluded by default
+# Footwork excluded by default; feints included because "feint, then punch" is a pattern in itself.
+DEFAULT_CATEGORIES = frozenset({Category.PUNCH, Category.FEINT, Category.DEFENSE})
 
 
 @dataclass(frozen=True)

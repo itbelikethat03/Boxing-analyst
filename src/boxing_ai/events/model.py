@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from boxing_ai.ontology import (
     Category,
+    Commitment,
     Direction,
     Outcome,
     Side,
@@ -38,6 +39,7 @@ class Event(BaseModel):
     target: Target | None = None
     direction: Direction | None = None
     outcome: Outcome | None = None
+    commitment: Commitment | None = None  # punches only; None = not judged
 
     # None for human annotations — never a fake 1.0.
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
@@ -55,30 +57,33 @@ class Event(BaseModel):
         if self.end_ms < self.start_ms:
             problems.append(f"end_ms ({self.end_ms}) is before start_ms ({self.start_ms})")
 
-        if spec.category is Category.PUNCH:
-            if self.side is None:
-                hint = f" (always {spec.implied_side})" if spec.implied_side else ""
-                problems.append(f"{self.action_type} requires a side{hint}")
-            elif spec.implied_side is not None and self.side is not spec.implied_side:
-                problems.append(
-                    f"{self.action_type} is always {spec.implied_side}, got side={self.side}"
-                )
-            if self.direction is not None:
-                problems.append(f"{self.action_type} is a punch and takes no direction")
-        else:
-            for name in ("side", "target", "outcome"):
-                if getattr(self, name) is not None:
-                    problems.append(f"{self.action_type} is {spec.category} and takes no {name}")
-            if self.direction is None:
-                if spec.direction_required:
-                    problems.append(f"{self.action_type} requires a direction")
-            elif not spec.directions:
-                problems.append(f"{self.action_type} takes no direction")
-            elif self.direction not in spec.directions:
-                allowed = "/".join(sorted(d.value for d in spec.directions))
-                problems.append(
-                    f"{self.action_type} direction must be one of {allowed}, got {self.direction}"
-                )
+        if spec.side_required and self.side is None:
+            hint = f" (always {spec.implied_side})" if spec.implied_side else ""
+            problems.append(f"{self.action_type} requires a side{hint}")
+        elif spec.implied_side is not None and self.side is not spec.implied_side:
+            problems.append(
+                f"{self.action_type} is always {spec.implied_side}, got side={self.side}"
+            )
+
+        for name, allowed in (
+            ("side", spec.takes_side),
+            ("target", spec.takes_target),
+            ("outcome", spec.takes_outcome),
+            ("commitment", spec.takes_commitment),
+        ):
+            if not allowed and getattr(self, name) is not None:
+                problems.append(f"{self.action_type} is {spec.category} and takes no {name}")
+
+        if self.direction is None:
+            if spec.direction_required:
+                problems.append(f"{self.action_type} requires a direction")
+        elif not spec.directions:
+            problems.append(f"{self.action_type} takes no direction")
+        elif self.direction not in spec.directions:
+            allowed = "/".join(sorted(d.value for d in spec.directions))
+            problems.append(
+                f"{self.action_type} direction must be one of {allowed}, got {self.direction}"
+            )
 
         if problems:
             raise ValueError("; ".join(problems))

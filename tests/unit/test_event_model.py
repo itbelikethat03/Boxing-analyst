@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from boxing_ai.events import Event
-from boxing_ai.ontology import Category, Direction, Outcome, Side, Target
+from boxing_ai.ontology import Category, Commitment, Direction, Outcome, Side, Target
 from tests.factories import ev
 
 BASE = {"fight": "f", "video": "v", "fighter": "a", "start_ms": 1000, "end_ms": 1180}
@@ -132,3 +132,33 @@ def test_all_problems_in_one_event_are_reported_together():
     assert "before start_ms" in text
     assert "JAB is always LEAD" in text
     assert "takes no direction" in text
+
+
+# --- Feints and probes ------------------------------------------------------------------------------
+
+
+def test_feint_takes_optional_side_and_target():
+    hand = Event(**BASE, action_type="FEINT", side="REAR", target="BODY")
+    assert (hand.category, hand.side, hand.target) == (Category.FEINT, Side.REAR, Target.BODY)
+    shoulder = Event(**BASE, action_type="FEINT")
+    assert shoulder.side is None and shoulder.target is None
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"outcome": "LANDED"}, "FEINT is FEINT and takes no outcome"),
+        ({"commitment": "PROBE"}, "FEINT is FEINT and takes no commitment"),
+        ({"direction": "LEFT"}, "FEINT takes no direction"),
+    ],
+)
+def test_invalid_feint_rejected(overrides, message):
+    with pytest.raises(ValidationError, match=message):
+        Event(**BASE, action_type="FEINT", **overrides)
+
+
+def test_probe_is_a_punch_attribute():
+    e = Event(**BASE, action_type="JAB", side="LEAD", commitment="PROBE")
+    assert e.commitment is Commitment.PROBE and e.category is Category.PUNCH
+    with pytest.raises(ValidationError, match="SLIP is DEFENSE and takes no commitment"):
+        Event(**BASE, action_type="SLIP", direction="LEFT", commitment="PROBE")

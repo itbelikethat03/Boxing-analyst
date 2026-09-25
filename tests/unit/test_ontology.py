@@ -3,6 +3,7 @@ import pytest
 from boxing_ai.ontology import (
     ACTIONS,
     Category,
+    SessionKind,
     Side,
     action_spec,
     actions_in,
@@ -18,6 +19,30 @@ def test_initial_punch_ontology():
 def test_defensive_and_movement_actions_are_registered_for_extensibility():
     assert set(actions_in(Category.DEFENSE)) == {"SLIP", "ROLL", "PULL", "BLOCK", "PARRY"}
     assert actions_in(Category.MOVEMENT) == ("STEP",)
+
+
+def test_feint_is_its_own_category_and_not_a_punch():
+    assert actions_in(Category.FEINT) == ("FEINT",)
+    spec = action_spec("FEINT")
+    assert spec.takes_side and not spec.side_required and spec.takes_target
+    assert not spec.takes_outcome and not spec.takes_commitment
+
+
+def test_every_punch_takes_side_target_outcome_and_commitment():
+    for code in actions_in(Category.PUNCH):
+        spec = action_spec(code)
+        assert spec.side_required and spec.takes_target and spec.takes_outcome
+        assert spec.takes_commitment
+
+
+def test_session_kinds_know_how_many_people_are_annotated():
+    assert {k: k.participants for k in SessionKind} == {
+        "FIGHT": 2,
+        "SPARRING": 2,
+        "PADS": 1,
+        "BAG": 1,
+        "SHADOW": 1,
+    }
 
 
 def test_combinations_and_variants_are_never_action_codes():
